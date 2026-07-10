@@ -35,12 +35,12 @@
   #price{font-size:clamp(30px,4.5vw,58px);font-weight:800;letter-spacing:.01em;line-height:.95;transition:color .12s;
     font-variant-numeric:tabular-nums;color:#fff}
   #delta{margin-top:1px;font-size:clamp(11px,1.4vw,16px);letter-spacing:.14em;text-transform:uppercase}
-  #delta b{font-weight:700;color:var(--ink-dim)}
+  #delta b{font-weight:700;color:#fff}
   /* same size as #delta % — flips buyers/sellers with the hourly move */
   #winning{margin-top:2px;font-size:clamp(11px,1.4vw,16px);letter-spacing:.14em;text-transform:uppercase;font-weight:800}
   #credit{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:60;
     font-family:var(--mono);font-size:clamp(9px,1.1vw,12px);letter-spacing:.06em;line-height:1.4;
-    text-align:center;color:var(--ink-dim);max-width:min(94vw,720px);pointer-events:auto;
+    text-align:center;color:#fff;max-width:min(94vw,720px);pointer-events:auto;
     text-shadow:0 1px 8px rgba(0,0,0,.9)}
   #credit a{color:var(--green);text-decoration:none;border-bottom:1px dotted var(--green-dim)}
   #credit a.mdt{color:var(--amber);border-bottom-color:rgba(255,194,75,.5)}
@@ -872,7 +872,7 @@ function updateHUD(dt){ priceFlashT-=dt; if(priceFlashT<=0)$('price').style.colo
   const d=ME.mid-ME.anchor, pct=ME.anchor? d/ME.anchor*100:0, up=d>=0;
   $('delta').innerHTML=`<b>${CONFIG.symbol.replace('USDT','')}/USD</b>&nbsp;&nbsp;<span style="color:${up?'var(--green)':'var(--red)'}">${up?'▲':'▼'} ${Math.abs(pct).toFixed(2)}%</span>`;
   const win=$('winning');
-  win.textContent = up ? 'BUYERS ARE WINNING!' : 'SELLERS ARE WINNING!';
+  win.textContent = up ? 'BUYERS ARE WINNING TODAY!' : 'SELLERS ARE WINNING TODAY!';
   win.style.color = up ? 'var(--green)' : 'var(--red)';
 }
 function updateHUDBook(){ /* command panels removed */ }
