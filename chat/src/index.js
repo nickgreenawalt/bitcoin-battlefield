@@ -105,12 +105,11 @@ export class ChatRoom {
   // every connected client so open chat windows update immediately.
   async admin(url) {
     let history = (await this.ctx.storage.get('history')) || [];
-    if (url.searchParams.get('clear') === '1') {
-      history = [];
-    } else {
-      const n = parseInt(url.searchParams.get('trim') || '0', 10);
-      if (n > 0) history = history.slice(n);
-    }
+    if (url.searchParams.get('clear') === '1') history = [];
+    const n = parseInt(url.searchParams.get('trim') || '0', 10);
+    if (n > 0) history = history.slice(n);
+    if (url.searchParams.get('censor') === '1')   // retroactively mask stored nicks + text
+      history = history.map(m => ({ ...m, nick: censor(m.nick || ''), text: censor(m.text || '') }));
     await this.ctx.storage.put('history', history);
     this.broadcast({ type: 'history', messages: history });
     return new Response(JSON.stringify({ ok: true, remaining: history.length }),
