@@ -36,6 +36,16 @@
     font-variant-numeric:tabular-nums;color:#fff}
   #delta{margin-top:1px;font-size:clamp(11px,1.4vw,16px);letter-spacing:.14em;text-transform:uppercase}
   #delta b{font-weight:700;color:var(--ink-dim)}
+  /* same size as #delta % — flips buyers/sellers with the hourly move */
+  #winning{margin-top:2px;font-size:clamp(11px,1.4vw,16px);letter-spacing:.14em;text-transform:uppercase;font-weight:800}
+  #credit{position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:60;
+    font-family:var(--mono);font-size:clamp(9px,1.1vw,12px);letter-spacing:.06em;line-height:1.4;
+    text-align:center;color:var(--ink-dim);max-width:min(94vw,720px);pointer-events:auto;
+    text-shadow:0 1px 8px rgba(0,0,0,.9)}
+  #credit a{color:var(--green);text-decoration:none;border-bottom:1px dotted var(--green-dim)}
+  #credit a.mdt{color:var(--amber);border-bottom-color:rgba(255,194,75,.5)}
+  #credit a:hover{opacity:.8}
+  @media (max-width:560px){ #credit{font-size:9px;top:4px;max-width:96vw} }
   #whale.candle{color:var(--green);text-shadow:0 0 30px rgba(95,208,106,.8)}
   #whale.nuke{color:var(--red);text-shadow:0 0 30px rgba(255,90,82,.8)}
   /* side command panels */
@@ -105,9 +115,15 @@
 
 <div id="status"></div>
 
+<div id="credit">
+  Created by <a href="https://www.motionbynick.com/" target="_blank" rel="noopener">Nick Greenawalt</a>,
+  the inventor of the <a class="mdt" href="https://milliondollartoilet.com/" target="_blank" rel="noopener">Million Dollar Toilet</a>
+</div>
+
 <div id="topc">
   <div id="price">—</div>
   <div id="delta"><span id="sym">BTCUSDT</span></div>
+  <div id="winning"></div>
 </div>
 
 <div id="log" class="panel"><h4>Killfeed</h4><div id="logrows"></div></div>
@@ -171,7 +187,7 @@ const CONFIG = {
   bandPct:0.02,            // field spans anchor ±2% (~a busy hour of BTC); a 0.5% move is a visible shove
   recenterAt:0.72,         // when |mid-anchor| exceeds this fraction of the band, drift the anchor
   eventMovePct:0.018,      // a sudden move of ≥1.8% reads as a real nuke (down) / god candle (up)
-  streakUnitEvery:4,       // consecutive same-direction seconds between escalating support units
+  streakUnitEvery:3,       // consecutive same-direction seconds between escalating support units (lower = reinforcements more often)
   supportDwellSec:10,      // how long a tank/heli hangs around before leaving
   tankQtyThreshold:14, soldiersPerTank:20,
   whaleNotionalUSD:220000, // massive trade -> nuke (sell) or god candle (buy)
@@ -852,6 +868,9 @@ function updateHUD(dt){ priceFlashT-=dt; if(priceFlashT<=0)$('price').style.colo
   $('price').textContent=fmtPrice(ME.mid);
   const d=ME.mid-ME.anchor, pct=ME.anchor? d/ME.anchor*100:0, up=d>=0;
   $('delta').innerHTML=`<b>${CONFIG.symbol.replace('USDT','')}/USD</b>&nbsp;&nbsp;<span style="color:${up?'var(--green)':'var(--red)'}">${up?'▲':'▼'} ${Math.abs(pct).toFixed(2)}%</span>`;
+  const win=$('winning');
+  win.textContent = up ? 'BUYERS ARE WINNING!' : 'SELLERS ARE WINNING!';
+  win.style.color = up ? 'var(--green)' : 'var(--red)';
 }
 function updateHUDBook(){ /* command panels removed */ }
 const _proj=new THREE.Vector3(); const topcEl=$('topc');
