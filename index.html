@@ -98,11 +98,23 @@
   #hud-bl .legend{font-size:9.5px;line-height:1.7;color:var(--ink-dim);letter-spacing:.03em;
     border-top:1px solid var(--line);padding-top:7px}
   #hud-bl .legend b{color:var(--ink);font-weight:700}
+  /* mobile camera toggle + gesture hint (hidden on desktop) */
+  #camtoggle,#mobhint{display:none}
   @media (max-width:760px){
     #hud-bl{display:none}
     #left,#right{width:150px;top:88px;font-size:10px}
     #ctl .slab,#dens-wrap,#speed-wrap{display:none}
     #price{font-size:24px}
+    /* let finger drags reach the canvas instead of being eaten by HUD panels */
+    #left,#right,#log,#score,#status,#fps,#tug{pointer-events:none}
+    #camtoggle{display:inline-flex;align-items:center;gap:7px;position:fixed;right:10px;bottom:12px;z-index:44;
+      font-family:var(--mono);font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+      color:var(--green);background:rgba(12,20,16,.92);border:1px solid var(--green);border-radius:4px;
+      padding:11px 15px;box-shadow:0 4px 18px rgba(0,0,0,.5)}
+    #camtoggle.cine{color:var(--amber);border-color:var(--amber)}
+    #mobhint{display:block;position:fixed;right:10px;bottom:56px;z-index:44;text-align:right;
+      font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--ink-dim);pointer-events:none;
+      text-shadow:0 1px 6px rgba(0,0,0,.9)}
   }
 </style>
 </head>
@@ -150,6 +162,9 @@
 <div id="tip"></div>
 <div id="whale"></div>
 <div id="toast"></div>
+
+<div id="mobhint">1 finger · move &nbsp; 2 fingers · pinch + turn</div>
+<button id="camtoggle">◎ Free</button>
 
 <div id="hud-bl" class="panel">
   <div class="chaos-lab"><span>Chaos</span><b id="chaosval">·</b></div>
@@ -247,7 +262,11 @@ const camera=new THREE.PerspectiveCamera(52,innerWidth/innerHeight,0.5,900);
 camera.position.set(0,42,-78);
 const controls=new OrbitControls(camera,renderer.domElement);
 controls.enableDamping=true; controls.dampingFactor=.08; controls.minDistance=15; controls.maxDistance=175;
-controls.maxPolarAngle=1.46; controls.target.set(0,3,0); controls.enablePan=false; controls.enabled=false;
+controls.maxPolarAngle=1.46; controls.target.set(0,3,0); controls.enabled=false;
+// pan enabled so touch can drag across the field; keeps desktop mouse-rotate/WASD unchanged
+controls.enablePan=true; controls.screenSpacePanning=false; controls.panSpeed=1.1;
+// mobile gestures: 1 finger = drag/move, 2 fingers = pinch-zoom + twist-rotate
+controls.touches={ ONE:THREE.TOUCH.PAN, TWO:THREE.TOUCH.DOLLY_ROTATE };
 
 // lights
 const key=new THREE.DirectionalLight(0xfff2e0,2.6); key.position.set(-60,80,-30);
@@ -1038,7 +1057,13 @@ function resetWorld(){ // zero all soldiers/corpses, reset ME
   ME.stats={gKills:0,rKills:0,gLoss:0,rLoss:0};
 }
 document.querySelectorAll('[data-sym]').forEach(b=>b.onclick=()=>{ initAudio(); setSymbol(b.dataset.sym); });
-document.querySelectorAll('[data-cam]').forEach(b=>b.onclick=()=>{ camDir.setMode(b.dataset.cam); if(b.dataset.cam==='CINEMATIC')camDir.newShot(); });
+document.querySelectorAll('[data-cam]').forEach(b=>b.onclick=()=>{ camDir.setMode(b.dataset.cam); if(b.dataset.cam==='CINEMATIC')camDir.newShot(); updateCamToggle(); });
+// mobile camera toggle: flip Free <-> Cinematic; hint only shows in Free
+const camToggle=$('camtoggle');
+function updateCamToggle(){ const nice={FREE:'◎ Free',CINEMATIC:'🎥 Cinematic',FOLLOW:'🎥 Follow',WHALE:'🎥 Cinematic'};
+  camToggle.textContent=nice[camDir.mode]||'🎥 Cinematic'; camToggle.classList.toggle('cine',camDir.mode!=='FREE');
+  $('mobhint').style.display=(camDir.mode==='FREE')?'':'none'; }
+camToggle.onclick=()=>{ initAudio(); const next=camDir.mode==='FREE'?'CINEMATIC':'FREE'; camDir.setMode(next); if(next==='CINEMATIC')camDir.newShot(); updateCamToggle(); };
 document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{ initAudio(); setMode(b.dataset.mode); });
 $('sndbtn').onclick=()=>{ initAudio(); CONFIG.audioEnabled=!CONFIG.audioEnabled; audio.setEnabled(CONFIG.audioEnabled);
   $('sndbtn').classList.toggle('on',CONFIG.audioEnabled); $('sndbtn').textContent=CONFIG.audioEnabled?'Sound ◆':'Sound ◇'; };
@@ -1065,6 +1090,7 @@ document.querySelector('[data-sym="BTCUSDT"]').classList.add('on');
 for(let i=0;i<20;i++)simStep(0.05);
 ME.anchor=ME.mid; ME.frontZ=zFromPrice(ME.mid);
 camDir.setMode('FREE');                    // free movement by default; Cinematic is an opt-in toggle
+updateCamToggle();
 requestAnimationFrame(frame);
 // go live immediately; the simulation keeps rendering until real BTC data starts flowing
 setMode('LIVE');
