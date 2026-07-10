@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/nickgreenawalt/.config/**)",
+      "Read(//Users/nickgreenawalt/**)",
+      "Bash(git config *)",
+      "Bash(npx --yes wrangler@latest --version)",
+      "Bash(git --version)"
+    ]
+  }
+}
