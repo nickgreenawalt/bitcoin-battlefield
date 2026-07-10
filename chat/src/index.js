@@ -1,27 +1,33 @@
 // Bitcoin Battlefield — live chat backend.
 // A single global chat room lives in one Durable Object. Visitors connect over a
 // WebSocket; every message is broadcast to everyone and the last N are persisted so
-// new arrivals see recent history. Messages and nicknames are run through a profanity
-// censor (word list below) before broadcast/storage. No rate limiting.
+// new arrivals see recent history. Messages and nicknames are run through the
+// `obscenity` profanity censor before broadcast/storage — it defeats leetspeak,
+// suffixes ("raped"), and concatenations ("fuckniggers") while whitelisting innocent
+// words like "class"/"grape". No rate limiting.
 
-import { BADWORDS } from './badwords.js';
+import {
+  RegExpMatcher, TextCensor, DataSet, pattern,
+  englishDataset, englishRecommendedTransformers, asteriskCensorStrategy,
+} from 'obscenity';
 
 const MAX_LEN = 2000;   // max characters per message (technical bound, not moderation)
 const MAX_NICK = 24;    // max characters per nickname
 const HISTORY = 50;     // how many recent messages new visitors receive
 
-// Build the censor once per isolate. Alphanumeric entries are matched on word
-// boundaries (so "class" is never censored for containing "ass"); symbolic entries
-// (e.g. emoji) are matched as plain substrings.
-const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const wordEntries = BADWORDS.filter(w => /^[a-z0-9 '&.\-]+$/i.test(w));
-const symbolEntries = BADWORDS.filter(w => !/^[a-z0-9 '&.\-]+$/i.test(w));
-const WORD_RE = new RegExp('\\b(?:' + wordEntries.map(escapeRe).join('|') + ')\\b', 'gi');
+// Extra terms not in the base dataset that the owner wants blocked. Note: "gay" will
+// also mask non-offensive uses — included at the owner's request.
+const EXTRA_WORDS = ['gay', 'niga', 'nigga'];
+let _dataset = new DataSet().addAll(englishDataset);
+for (const w of EXTRA_WORDS)
+  _dataset = _dataset.addPhrase(p => p.setMetadata({ originalWord: w }).addPattern(pattern`${w}`));
+
+const _matcher = new RegExpMatcher({ ..._dataset.build(), ...englishRecommendedTransformers });
+const _censor = new TextCensor().setStrategy(asteriskCensorStrategy());
 
 function censor(text) {
-  let out = String(text).replace(WORD_RE, m => '*'.repeat(m.length));
-  for (const s of symbolEntries) out = out.split(s).join('*'.repeat([...s].length));
-  return out;
+  const s = String(text);
+  return _censor.applyTo(s, _matcher.getAllMatches(s));
 }
 
 const CORS = { 'Access-Control-Allow-Origin': '*' };
