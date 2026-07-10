@@ -38,6 +38,15 @@ export default {
       }
       return new Response('Bitcoin Battlefield chat. Connect with a WebSocket.', { headers: CORS });
     }
+    // Moderation endpoint: trim/clear stored history. Guarded by the ADMIN_KEY secret.
+    //   POST /admin?trim=N   -> drop the oldest N stored messages
+    //   POST /admin?clear=1  -> wipe all stored history
+    if (url.pathname === '/admin') {
+      if (!env.ADMIN_KEY || request.headers.get('x-admin-key') !== env.ADMIN_KEY)
+        return new Response('forbidden', { status: 403, headers: CORS });
+      const id = env.CHAT_ROOM.idFromName('global');
+      return env.CHAT_ROOM.get(id).fetch(request);
+    }
     return new Response('Not found', { status: 404, headers: CORS });
   },
 };
@@ -49,6 +58,9 @@ export class ChatRoom {
   }
 
   async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/admin') return this.admin(url);
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
@@ -88,6 +100,22 @@ export class ChatRoom {
 
   async webSocketClose() { this.broadcastPresence(); }
   async webSocketError() { this.broadcastPresence(); }
+
+  // Trim oldest N (?trim=N) or wipe all (?clear=1) stored messages, then live-refresh
+  // every connected client so open chat windows update immediately.
+  async admin(url) {
+    let history = (await this.ctx.storage.get('history')) || [];
+    if (url.searchParams.get('clear') === '1') {
+      history = [];
+    } else {
+      const n = parseInt(url.searchParams.get('trim') || '0', 10);
+      if (n > 0) history = history.slice(n);
+    }
+    await this.ctx.storage.put('history', history);
+    this.broadcast({ type: 'history', messages: history });
+    return new Response(JSON.stringify({ ok: true, remaining: history.length }),
+      { headers: { ...CORS, 'content-type': 'application/json' } });
+  }
 
   broadcast(obj) {
     const s = JSON.stringify(obj);
