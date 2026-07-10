@@ -112,9 +112,11 @@
       color:var(--green);background:rgba(12,20,16,.92);border:1px solid var(--green);border-radius:4px;
       padding:11px 15px;box-shadow:0 4px 18px rgba(0,0,0,.5)}
     #camtoggle.cine{color:var(--amber);border-color:var(--amber)}
-    #mobhint{display:block;position:fixed;right:10px;bottom:56px;z-index:44;text-align:right;
-      font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--ink-dim);pointer-events:none;
-      text-shadow:0 1px 6px rgba(0,0,0,.9)}
+    #mobhint{display:block;position:fixed;right:12px;bottom:62px;z-index:44;text-align:right;max-width:150px;
+      font-family:var(--mono);font-size:9px;line-height:1.5;letter-spacing:.06em;color:var(--ink);pointer-events:none;
+      text-shadow:0 1px 6px rgba(0,0,0,.95)}
+    /* keep the killfeed on the left so it clears the camera controls */
+    #log{left:10px;transform:none;width:58vw;height:76px}
   }
 </style>
 </head>
@@ -163,7 +165,7 @@
 <div id="whale"></div>
 <div id="toast"></div>
 
-<div id="mobhint">1 finger · move &nbsp; 2 fingers · pinch + turn</div>
+<div id="mobhint">1 finger · move<br>2 fingers · pinch + turn</div>
 <button id="camtoggle">◎ Free</button>
 
 <div id="hud-bl" class="panel">
