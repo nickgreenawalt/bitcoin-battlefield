@@ -1,13 +1,28 @@
 // Bitcoin Battlefield — live chat backend.
 // A single global chat room lives in one Durable Object. Visitors connect over a
 // WebSocket; every message is broadcast to everyone and the last N are persisted so
-// new arrivals see recent history. Per the site owner's choice there is NO content
-// moderation (no rate limiting, no profanity filter) — only a message-size cap and a
-// nickname-length cap, which exist purely to bound storage/payload size.
+// new arrivals see recent history. Messages and nicknames are run through a profanity
+// censor (word list below) before broadcast/storage. No rate limiting.
+
+import { BADWORDS } from './badwords.js';
 
 const MAX_LEN = 2000;   // max characters per message (technical bound, not moderation)
 const MAX_NICK = 24;    // max characters per nickname
 const HISTORY = 50;     // how many recent messages new visitors receive
+
+// Build the censor once per isolate. Alphanumeric entries are matched on word
+// boundaries (so "class" is never censored for containing "ass"); symbolic entries
+// (e.g. emoji) are matched as plain substrings.
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const wordEntries = BADWORDS.filter(w => /^[a-z0-9 '&.\-]+$/i.test(w));
+const symbolEntries = BADWORDS.filter(w => !/^[a-z0-9 '&.\-]+$/i.test(w));
+const WORD_RE = new RegExp('\\b(?:' + wordEntries.map(escapeRe).join('|') + ')\\b', 'gi');
+
+function censor(text) {
+  let out = String(text).replace(WORD_RE, m => '*'.repeat(m.length));
+  for (const s of symbolEntries) out = out.split(s).join('*'.repeat([...s].length));
+  return out;
+}
 
 const CORS = { 'Access-Control-Allow-Origin': '*' };
 
@@ -63,7 +78,7 @@ export class ChatRoom {
     if (data.type === 'msg') {
       const att = ws.deserializeAttachment() || {};
       const nick = att.nick || 'anon';
-      const text = String(data.text || '').slice(0, MAX_LEN);
+      const text = censor(String(data.text || '').slice(0, MAX_LEN));
       if (!text.trim()) return;
       const msg = { type: 'msg', nick, text, ts: Date.now() };
       this.broadcast(msg);
@@ -101,5 +116,5 @@ function sanitizeNick(n) {
     const code = str.charCodeAt(i);
     if (code >= 32 && code !== 127) out += str[i];
   }
-  return out.trim() || 'anon';
+  return censor(out.trim()) || 'anon';
 }
