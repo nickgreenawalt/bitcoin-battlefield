@@ -88,19 +88,18 @@
   /* toast */
   #toast{position:fixed;bottom:118px;left:50%;transform:translateX(-50%);z-index:47;background:rgba(6,10,9,.94);
     border:1px solid var(--red);color:var(--red);padding:8px 14px;font-size:11px;display:none}
-  /* intro */
-  #intro{position:fixed;inset:0;z-index:60;background:radial-gradient(120% 90% at 50% 30%,rgba(10,20,16,.86),rgba(3,6,5,.97));
-    display:flex;align-items:center;justify-content:center;cursor:pointer}
-  #introbox{text-align:center;max-width:520px;padding:0 24px;animation:fadein .5s ease}
-  #introbox h1{font-size:clamp(26px,5vw,46px);margin:0 0 6px;letter-spacing:.14em;font-weight:800;
-    background:linear-gradient(90deg,var(--green),var(--amber),var(--red));-webkit-background-clip:text;background-clip:text;color:transparent}
-  #introbox .tag{color:var(--ink-dim);letter-spacing:.24em;font-size:11px;text-transform:uppercase;margin-bottom:22px}
-  #introbox .rules{display:grid;gap:7px;font-size:13px;text-align:left;margin:0 auto 24px;max-width:360px}
-  #introbox .rules div{display:flex;gap:9px;align-items:baseline}
-  #introbox .go{display:inline-block;border:1px solid var(--green);color:var(--green);padding:9px 22px;
-    letter-spacing:.2em;font-size:12px;animation:pulse 1.6s infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  /* bottom-left HUD: chaos meter + camera controls legend */
+  #hud-bl{position:fixed;left:10px;bottom:10px;z-index:40;display:flex;flex-direction:column;gap:7px;
+    padding:9px 11px;max-width:210px}
+  #hud-bl .chaos-lab{display:flex;justify-content:space-between;align-items:center;font-size:9px;
+    text-transform:uppercase;letter-spacing:.12em;color:var(--ink-dim)}
+  #hud-bl .chaos-lab b{color:var(--amber);font-weight:700;font-size:10px;letter-spacing:.14em}
+  #chaos{width:100%;accent-color:var(--amber);margin:0}
+  #hud-bl .legend{font-size:9.5px;line-height:1.7;color:var(--ink-dim);letter-spacing:.03em;
+    border-top:1px solid var(--line);padding-top:7px}
+  #hud-bl .legend b{color:var(--ink);font-weight:700}
   @media (max-width:760px){
+    #hud-bl{display:none}
     #left,#right{width:150px;top:88px;font-size:10px}
     #ctl .slab,#dens-wrap,#speed-wrap{display:none}
     #price{font-size:24px}
@@ -152,16 +151,16 @@
 <div id="whale"></div>
 <div id="toast"></div>
 
-<div id="intro"><div id="introbox">
-  <h1>BITCOIN&nbsp;BATTLEFIELD</h1>
-  <div class="tag">a live market, fought by toy soldiers</div>
-  <div class="rules">
-    <div><span class="green">▮</span> Green are buyers. Red are sellers.</div>
-    <div><span class="amber">▮</span> The frontline is the price. Walls are armies.</div>
-    <div><span class="red">▮</span> Every trade is a volley. Somebody dies.</div>
+<div id="hud-bl" class="panel">
+  <div class="chaos-lab"><span>Chaos</span><b id="chaosval">·</b></div>
+  <input id="chaos" type="range" min="1" max="8" step="1" value="6">
+  <div class="legend">
+    <b>WASD</b> move &nbsp; <b>Q/E</b> down/up<br>
+    <b>Shift</b> boost &nbsp; <b>drag</b> orbit &nbsp; <b>scroll</b> zoom<br>
+    <b>1/2/3</b> cinematic / follow / free
   </div>
-  <span class="go">▶ DEPLOY</span>
-</div></div>
+</div>
+
 
 <script type="importmap">
 { "imports": {
@@ -235,13 +234,13 @@ renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1
 app.appendChild(renderer.domElement);
 
 const scene=new THREE.Scene();
-const horizon=new THREE.Color(0x4a3d2a);
-scene.fog=new THREE.Fog(horizon.clone().lerp(new THREE.Color(0x1c221e),.25),150,380);
-// gradient sky
-{ const g=new THREE.SphereGeometry(500,24,16);
-  const m=new THREE.ShaderMaterial({side:THREE.BackSide,uniforms:{top:{value:new THREE.Color(0x2a3f5e)},bot:{value:new THREE.Color(0x5a4630)}},
+const horizon=new THREE.Color(0xbcd8f0);          // pale blue haze where the endless field meets the sky
+scene.fog=new THREE.Fog(horizon,220,820);         // distant ground dissolves into sky -> field looks infinite
+// blue gradient sky
+{ const g=new THREE.SphereGeometry(700,24,16);
+  const m=new THREE.ShaderMaterial({side:THREE.BackSide,uniforms:{top:{value:new THREE.Color(0x2f74c0)},bot:{value:new THREE.Color(0xbcd8f0)}},
     vertexShader:`varying float h;void main(){h=normalize(position).y;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-    fragmentShader:`varying float h;uniform vec3 top;uniform vec3 bot;void main(){float t=smoothstep(-.15,.5,h);gl_FragColor=vec4(mix(bot,top,t),1.);}`});
+    fragmentShader:`varying float h;uniform vec3 top;uniform vec3 bot;void main(){float t=smoothstep(-.05,.55,h);gl_FragColor=vec4(mix(bot,top,t),1.);}`});
   scene.add(new THREE.Mesh(g,m)); }
 
 const camera=new THREE.PerspectiveCamera(52,innerWidth/innerHeight,0.5,900);
@@ -279,6 +278,10 @@ terrGeo.rotateX(-Math.PI/2);
 }
 const terrMat=new THREE.MeshStandardMaterial({vertexColors:true,roughness:.97,metalness:0,flatShading:false});
 const terrain=new THREE.Mesh(terrGeo,terrMat); terrain.receiveShadow=true; scene.add(terrain);
+// endless ground: a huge flat plane just beneath the detailed field so the battlefield reads as going on forever
+{ const gm=new THREE.MeshStandardMaterial({color:0x6d7746,roughness:1,metalness:0,polygonOffset:true,polygonOffsetFactor:1,polygonOffsetUnits:1});
+  const gp=new THREE.Mesh(new THREE.PlaneGeometry(6000,6000),gm);
+  gp.rotation.x=-Math.PI/2; gp.position.y=-0.15; gp.renderOrder=-1; scene.add(gp); }
 const terrCol=terrGeo.attributes.color;
 function scorch(cx,cz,rad){ const pos=terrGeo.attributes.position;
   for(let i=0;i<pos.count;i++){ const dx=pos.getX(i)-cx,dz=pos.getZ(i)-cz; const d=Math.hypot(dx,dz);
@@ -1041,6 +1044,10 @@ $('sndbtn').onclick=()=>{ initAudio(); CONFIG.audioEnabled=!CONFIG.audioEnabled;
   $('sndbtn').classList.toggle('on',CONFIG.audioEnabled); $('sndbtn').textContent=CONFIG.audioEnabled?'Sound ◆':'Sound ◇'; };
 $('speed').oninput=e=>CONFIG.simSpeed=+e.target.value;
 $('dens').oninput=e=>{ CONFIG.density=+e.target.value; };
+// chaos meter: slider right = more chaos = lower reinforcement threshold. 6 -> streakUnitEvery 3 (default)
+function applyChaos(v){ CONFIG.streakUnitEvery=9-v; const el=$('chaosval'); if(el)el.textContent=['CALM','CALM','LOW','MILD','LIVELY','HOT','WILD','INSANE','MAX'][v]||v; }
+$('chaos').oninput=e=>applyChaos(+e.target.value);
+applyChaos(+$('chaos').value);
 addEventListener('keydown',e=>{ if(e.key==='1')camDir.setMode('CINEMATIC'); if(e.key==='2')camDir.setMode('FOLLOW'); if(e.key==='3')camDir.setMode('FREE');
   if(e.key==='f'){ fpsShown=!fpsShown; $('fps').style.display=fpsShown?'block':'none'; }
   const k=e.key.toLowerCase(); if(['w','a','s','d','q','e','arrowup','arrowdown','arrowleft','arrowright','shift'].includes(k)){ keys.add(k); if(k.startsWith('arrow'))e.preventDefault(); } });
@@ -1061,7 +1068,9 @@ camDir.setMode('FREE');                    // free movement by default; Cinemati
 requestAnimationFrame(frame);
 // go live immediately; the simulation keeps rendering until real BTC data starts flowing
 setMode('LIVE');
-$('intro').addEventListener('click',()=>{ initAudio(); $('intro').style.display='none'; },{once:true});
+// no title screen — start straight into the battle; audio unlocks on first user gesture
+addEventListener('pointerdown',()=>initAudio(),{once:true});
+addEventListener('keydown',()=>initAudio(),{once:true});
 </script>
 </body>
 </html>
