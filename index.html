@@ -98,6 +98,38 @@
   #hud-bl .legend{font-size:9.5px;line-height:1.7;color:var(--ink-dim);letter-spacing:.03em;
     border-top:1px solid var(--line);padding-top:7px}
   #hud-bl .legend b{color:var(--ink);font-weight:700}
+  /* live chat */
+  #chatbtn{position:fixed;right:16px;bottom:16px;z-index:55;font-family:var(--mono);font-size:12px;
+    font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--green);cursor:pointer;
+    background:rgba(12,20,16,.92);border:1px solid var(--green);border-radius:4px;padding:10px 14px;
+    box-shadow:0 4px 18px rgba(0,0,0,.5)}
+  #chatbtn.on{background:rgba(95,208,106,.18)}
+  #chatbtn .dot{color:var(--green)}
+  #chatpanel{position:fixed;right:16px;bottom:62px;width:330px;height:min(440px,68vh);z-index:55;display:none;
+    flex-direction:column;background:rgba(8,13,11,.95);border:1px solid var(--line);border-radius:6px;
+    overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+  #chathead{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--line);
+    background:rgba(20,30,26,.7)}
+  #chathead .t{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink);flex:1}
+  #chatonline{font-size:10px;color:var(--green);letter-spacing:.06em}
+  #chatclose{background:none;border:none;color:var(--ink-dim);font-size:14px;cursor:pointer;padding:0 2px}
+  #chatclose:hover{color:var(--red)}
+  #chatlog{flex:1;overflow-y:auto;padding:9px 11px;display:flex;flex-direction:column;gap:5px;font-size:12px;line-height:1.4}
+  #chatlog .m{word-wrap:break-word;overflow-wrap:anywhere}
+  #chatlog .m .who{color:var(--green);font-weight:700}
+  #chatlog .m .who.me{color:var(--amber)}
+  #chatlog .sys{color:var(--ink-dim);font-style:italic;font-size:10.5px}
+  #chatlog .tm{color:var(--ink-dim);font-size:9px;margin-right:4px}
+  .chatrow{display:flex;gap:6px;padding:8px;border-top:1px solid var(--line);background:rgba(20,30,26,.5)}
+  .chatrow input{flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:var(--ink);
+    background:rgba(6,10,9,.8);border:1px solid var(--line);border-radius:3px;padding:7px 9px;outline:none}
+  .chatrow input:focus{border-color:var(--green)}
+  .chatrow button{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--green);background:rgba(95,208,106,.14);border:1px solid var(--green);border-radius:3px;padding:0 12px;cursor:pointer}
+  @media (max-width:760px){
+    #chatpanel{right:8px;left:8px;width:auto;bottom:60px;height:66vh}
+    #chatbtn{bottom:74px;right:10px}
+  }
   /* mobile camera toggle + gesture hint (hidden on desktop) */
   #camtoggle,#mobhint{display:none}
   @media (max-width:760px){
@@ -112,7 +144,7 @@
       color:var(--green);background:rgba(12,20,16,.92);border:1px solid var(--green);border-radius:4px;
       padding:11px 15px;box-shadow:0 4px 18px rgba(0,0,0,.5)}
     #camtoggle.cine{color:var(--amber);border-color:var(--amber)}
-    #mobhint{display:block;position:fixed;right:12px;bottom:62px;z-index:44;text-align:right;max-width:150px;
+    #mobhint{display:block;position:fixed;right:12px;bottom:120px;z-index:44;text-align:right;max-width:150px;
       font-family:var(--mono);font-size:9px;line-height:1.5;letter-spacing:.06em;color:var(--ink);pointer-events:none;
       text-shadow:0 1px 6px rgba(0,0,0,.95)}
     /* keep the killfeed on the left so it clears the camera controls */
@@ -167,6 +199,24 @@
 
 <div id="mobhint">1 finger · move<br>2 fingers · pinch + turn</div>
 <button id="camtoggle">◎ Free</button>
+
+<button id="chatbtn"><span class="dot">●</span> Chat</button>
+<div id="chatpanel">
+  <div id="chathead">
+    <span class="t">Battlefield Chat</span>
+    <span id="chatonline">● 0</span>
+    <button id="chatclose" title="Close">✕</button>
+  </div>
+  <div id="chatlog"></div>
+  <div class="chatrow" id="chatjoin">
+    <input id="chatnick" maxlength="24" placeholder="Pick a nickname…" autocomplete="off">
+    <button id="chatjoinbtn">Join</button>
+  </div>
+  <div class="chatrow" id="chatinput" style="display:none">
+    <input id="chatmsg" maxlength="2000" placeholder="Message…" autocomplete="off">
+    <button id="chatsend">Send</button>
+  </div>
+</div>
 
 <div id="hud-bl" class="panel">
   <div class="chaos-lab"><span>Chaos</span><b id="chaosval">·</b></div>
@@ -1075,16 +1125,58 @@ $('dens').oninput=e=>{ CONFIG.density=+e.target.value; };
 function applyChaos(v){ CONFIG.streakUnitEvery=9-v; const el=$('chaosval'); if(el)el.textContent=['CALM','CALM','LOW','MILD','LIVELY','HOT','WILD','INSANE','MAX'][v]||v; }
 $('chaos').oninput=e=>applyChaos(+e.target.value);
 applyChaos(+$('chaos').value);
-addEventListener('keydown',e=>{ if(e.key==='1')camDir.setMode('CINEMATIC'); if(e.key==='2')camDir.setMode('FOLLOW'); if(e.key==='3')camDir.setMode('FREE');
+const typingInField=e=>{ const t=e.target; return t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'); };
+addEventListener('keydown',e=>{ if(typingInField(e))return;   // don't drive the camera while typing in chat
+  if(e.key==='1')camDir.setMode('CINEMATIC'); if(e.key==='2')camDir.setMode('FOLLOW'); if(e.key==='3')camDir.setMode('FREE');
   if(e.key==='f'){ fpsShown=!fpsShown; $('fps').style.display=fpsShown?'block':'none'; }
   const k=e.key.toLowerCase(); if(['w','a','s','d','q','e','arrowup','arrowdown','arrowleft','arrowright','shift'].includes(k)){ keys.add(k); if(k.startsWith('arrow'))e.preventDefault(); } });
-addEventListener('keyup',e=>{ keys.delete(e.key.toLowerCase()); });
+addEventListener('keyup',e=>{ if(typingInField(e))return; keys.delete(e.key.toLowerCase()); });
 blur&&addEventListener('blur',()=>keys.clear());
 /* tap no longer yanks the camera into FREE — use the Free button. keeps mobile framing stable. */
 
 // resize
 addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
 document.addEventListener('visibilitychange',()=>{ running=!document.hidden; if(running){ last=performance.now(); } });
+
+/* ============================================================ LIVE CHAT */
+(function chat(){
+  const WS_URL='wss://bitcoin-battlefield-chat.nickgreenawalt.workers.dev/';
+  const btn=$('chatbtn'), panel=$('chatpanel'), logEl=$('chatlog'), onlineEl=$('chatonline');
+  const joinRow=$('chatjoin'), inputRow=$('chatinput'), nickI=$('chatnick'), msgI=$('chatmsg');
+  let ws=null, nick=localStorage.getItem('bb_nick')||'', joined=false, open=false, retry=0;
+  const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const hhmm=ts=>{ const d=new Date(ts||Date.now()); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const atBottom=()=> logEl.scrollHeight-logEl.scrollTop-logEl.clientHeight < 40;
+  function append(html){ const stick=atBottom(); logEl.insertAdjacentHTML('beforeend',html); if(stick)logEl.scrollTop=logEl.scrollHeight; }
+  function addMsg(n,text,ts){ const me=(n===nick)?' me':''; append(`<div class="m"><span class="tm">${hhmm(ts)}</span><span class="who${me}">${esc(n)}</span> ${esc(text)}</div>`); }
+  function addSys(text){ append(`<div class="sys">${esc(text)}</div>`); }
+  function connect(){
+    ws=new WebSocket(WS_URL);
+    ws.onopen=()=>{ retry=0; if(joined&&nick)ws.send(JSON.stringify({type:'join',nick})); };
+    ws.onmessage=e=>{ let d; try{d=JSON.parse(e.data);}catch{ return; }
+      if(d.type==='history'){ logEl.innerHTML=''; (d.messages||[]).forEach(m=>addMsg(m.nick,m.text,m.ts)); logEl.scrollTop=logEl.scrollHeight; }
+      else if(d.type==='msg') addMsg(d.nick,d.text,d.ts);
+      else if(d.type==='system') addSys(d.text);
+      else if(d.type==='presence') onlineEl.textContent='● '+d.count; };
+    ws.onclose=()=>{ ws=null; if(open){ retry=Math.min(retry+1,5); setTimeout(connect,1000*retry); } };
+    ws.onerror=()=>{ try{ws.close();}catch{} };
+  }
+  function doJoin(){ const n=nickI.value.trim(); if(!n)return; nick=n; localStorage.setItem('bb_nick',n);
+    joined=true; if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'join',nick}));
+    joinRow.style.display='none'; inputRow.style.display='flex'; msgI.focus(); }
+  function send(){ const t=msgI.value; if(!t.trim()||!ws||ws.readyState!==1)return; ws.send(JSON.stringify({type:'msg',text:t})); msgI.value=''; }
+  function openChat(){ open=true; panel.style.display='flex'; btn.classList.add('on');
+    if(!ws)connect();
+    if(nick){ joined=true; joinRow.style.display='none'; inputRow.style.display='flex'; } else { joinRow.style.display='flex'; inputRow.style.display='none'; }
+    logEl.scrollTop=logEl.scrollHeight; }
+  function closeChat(){ open=false; panel.style.display='none'; btn.classList.remove('on'); }
+  btn.onclick=()=>{ open?closeChat():openChat(); };
+  $('chatclose').onclick=closeChat;
+  $('chatjoinbtn').onclick=doJoin;
+  nickI.addEventListener('keydown',e=>{ if(e.key==='Enter')doJoin(); });
+  $('chatsend').onclick=send;
+  msgI.addEventListener('keydown',e=>{ if(e.key==='Enter')send(); });
+})();
 
 /* ============================================================ BOOT */
 document.querySelector('[data-sym="BTCUSDT"]').classList.add('on');

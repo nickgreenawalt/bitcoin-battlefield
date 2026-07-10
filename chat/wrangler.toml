@@ -1,0 +1,13 @@
+name = "bitcoin-battlefield-chat"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# Durable Object holds the single global chat room and fans out WebSocket messages.
+[[durable_objects.bindings]]
+name = "CHAT_ROOM"
+class_name = "ChatRoom"
+
+# SQLite-backed DO class -> works on the Workers free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ChatRoom"]
