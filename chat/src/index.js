@@ -29,7 +29,19 @@ const FLUSH_MS = 15000; // never persist more often than this
 
 // ---- auto-pause cost ceilings (per UTC day). Tune to taste. ----
 const DAILY_WRITE_BUDGET = 50000;   // storage flushes/day before the room pauses
-const DAILY_MSG_BUDGET   = 500000;  // messages/day before the room pauses
+const DAILY_MSG_BUDGET   = 300000;  // messages/day before the room pauses
+const DAILY_CONN_BUDGET  = 200000;  // new connections/day before the room pauses
+
+// ---- anti-abuse / anti-bot limits ----
+// Per-IP limits are kept LENIENT so carrier-grade NAT (many legit mobile users share one
+// IP) isn't blocked; the global daily budgets + auto-pause are the real cost ceiling.
+const MAX_CONNS          = 800;     // global concurrent connections (protects the single DO)
+const MAX_CONNS_PER_IP   = 20;      // concurrent connections per IP
+const IP_CONN_WINDOW_MS  = 60000;   // window for per-IP new-connection rate limiting
+const IP_CONN_MAX        = 60;      // max new connections per IP per minute (churn guard)
+const MSG_WINDOW_MS      = 4000;    // window for per-connection message rate limiting
+const MSG_MAX            = 8;       // max messages per window per connection
+const JOIN_MIN_MS        = 400;     // ignore join spam faster than this
 
 const EXTRA_BAD = ['gay', 'niga', 'nigga'];
 const EXTRA_OK = ['cockpit', 'shiitake', 'shiitakes', 'mishit'];
@@ -119,7 +131,10 @@ export class ChatRoom {
     this.day = utcDay();
     this.dayWrites = 0;
     this.dayMsgs = 0;
+    this.dayConns = 0;
     this.paused = false;
+    this.connsByIp = new Map();     // ip -> current concurrent count
+    this.recentConnByIp = new Map();// ip -> [recent connect timestamps]
   }
 
   async load() {
@@ -130,12 +145,13 @@ export class ChatRoom {
     this.day = s.day || utcDay();
     this.dayWrites = s.dayWrites || 0;
     this.dayMsgs = s.dayMsgs || 0;
+    this.dayConns = s.dayConns || 0;
     this.rollDay();
     this.loaded = true;
   }
 
   rollDay() {
-    if (this.day !== utcDay()) { this.day = utcDay(); this.dayWrites = 0; this.dayMsgs = 0; this.paused = false; }
+    if (this.day !== utcDay()) { this.day = utcDay(); this.dayWrites = 0; this.dayMsgs = 0; this.dayConns = 0; this.paused = false; }
   }
 
   async fetch(request) {
@@ -146,18 +162,37 @@ export class ChatRoom {
     this.rollDay();
     // Budget hit -> refuse new connections so cost stays capped until the UTC reset.
     if (this.paused) return new Response('paused', { status: 503, headers: CORS });
+    if (this.dayConns >= DAILY_CONN_BUDGET) { this.pause(); return new Response('paused', { status: 503, headers: CORS }); }
+
+    // ---- anti-abuse gates (cheap, before we accept the socket) ----
+    if (this.sessions.size >= MAX_CONNS) return new Response('busy', { status: 503, headers: CORS });
+    const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+    const now = Date.now();
+    const recent = (this.recentConnByIp.get(ip) || []).filter(t => now - t < IP_CONN_WINDOW_MS);
+    if (recent.length >= IP_CONN_MAX) return new Response('rate limited', { status: 429, headers: CORS });
+    if ((this.connsByIp.get(ip) || 0) >= MAX_CONNS_PER_IP) return new Response('too many connections', { status: 429, headers: CORS });
+    recent.push(now); this.recentConnByIp.set(ip, recent);
+    this.connsByIp.set(ip, (this.connsByIp.get(ip) || 0) + 1);
+    this.dayConns++;
 
     const pair = new WebSocketPair();
     const client = pair[0], server = pair[1];
     server.accept();   // classic accept — no storage write
-    const session = { ws: server, nick: 'anon' };   // state lives here, not on the socket
+    const session = { ws: server, nick: 'anon', ip, msgTimes: [], lastJoin: 0 };
     this.sessions.add(session);
 
     server.send(JSON.stringify({ type: 'history', messages: stripRaw(this.history) }));
     this.broadcastPresence();
 
     server.addEventListener('message', ev => { try { this.onMessage(session, ev.data); } catch (e) {} });
-    const drop = () => { this.sessions.delete(session); this.broadcastPresence(); if (this.sessions.size === 0 && this.dirty) this.flush(); };
+    const drop = () => {
+      if (this.sessions.delete(session)) {
+        const c = (this.connsByIp.get(ip) || 1) - 1;
+        if (c <= 0) this.connsByIp.delete(ip); else this.connsByIp.set(ip, c);
+      }
+      this.broadcastPresence();
+      if (this.sessions.size === 0 && this.dirty) this.flush();
+    };
     server.addEventListener('close', drop);
     server.addEventListener('error', drop);
 
@@ -165,10 +200,19 @@ export class ChatRoom {
   }
 
   onMessage(s, raw) {
+    if (typeof raw !== 'string' || raw.length > MAX_LEN + 200) return; // ignore binary / oversized frames
     let data;
     try { data = JSON.parse(raw); } catch (e) { return; }
 
+    const now = Date.now();
+    // per-connection message rate limit: drop anything past the window budget (bot/flood guard)
+    s.msgTimes = (s.msgTimes || []).filter(t => now - t < MSG_WINDOW_MS);
+    if (s.msgTimes.length >= MSG_MAX) return;
+    s.msgTimes.push(now);
+
     if (data.type === 'join') {
+      if (now - (s.lastJoin || 0) < JOIN_MIN_MS) return;   // join-spam guard
+      s.lastJoin = now;
       s.nick = sanitizeNick(data.nick);
       this.broadcast({ type: 'system', text: s.nick + ' joined', ts: Date.now() });
       this.broadcastPresence();
@@ -205,7 +249,7 @@ export class ChatRoom {
     if (this.dayWrites >= DAILY_WRITE_BUDGET) { this.pause(); return; }
     try {
       await this.ctx.storage.put('state', {
-        history: this.history, day: this.day, dayWrites: this.dayWrites + 1, dayMsgs: this.dayMsgs,
+        history: this.history, day: this.day, dayWrites: this.dayWrites + 1, dayMsgs: this.dayMsgs, dayConns: this.dayConns,
       });
       this.dayWrites++;
       this.dirty = false;
@@ -224,7 +268,7 @@ export class ChatRoom {
     for (const s of this.sessions) { try { s.ws.close(1013, 'paused'); } catch (e) {} }
     this.sessions.clear();
     // best-effort persist of the paused flag counters
-    this.ctx.storage.put('state', { history: this.history, day: this.day, dayWrites: this.dayWrites, dayMsgs: this.dayMsgs }).catch(() => {});
+    this.ctx.storage.put('state', { history: this.history, day: this.day, dayWrites: this.dayWrites, dayMsgs: this.dayMsgs, dayConns: this.dayConns }).catch(() => {});
   }
 
   broadcast(obj) {
@@ -241,11 +285,11 @@ export class ChatRoom {
       this.history = this.history.map(m => ({ ...m, nick: censor(m.nick || ''), text: censor(m.text || '') }));
       scrubVerticalAll(this.history);
     }
-    if (url.searchParams.get('resume') === '1') { this.paused = false; this.dayWrites = 0; this.dayMsgs = 0; }
+    if (url.searchParams.get('resume') === '1') { this.paused = false; this.dayWrites = 0; this.dayMsgs = 0; this.dayConns = 0; }
     this.dirty = true;
     await this.flush();
     this.broadcast({ type: 'history', messages: stripRaw(this.history) });
-    return new Response(JSON.stringify({ ok: true, remaining: this.history.length, paused: this.paused, dayWrites: this.dayWrites, dayMsgs: this.dayMsgs }),
+    return new Response(JSON.stringify({ ok: true, remaining: this.history.length, paused: this.paused, dayWrites: this.dayWrites, dayMsgs: this.dayMsgs, dayConns: this.dayConns, live: this.sessions.size, ips: this.connsByIp.size }),
       { headers: { ...CORS, 'content-type': 'application/json' } });
   }
 }
