@@ -1,33 +1,94 @@
 // Bitcoin Battlefield — live chat backend.
 // A single global chat room lives in one Durable Object. Visitors connect over a
 // WebSocket; every message is broadcast to everyone and the last N are persisted so
-// new arrivals see recent history. Messages and nicknames are run through the
-// `obscenity` profanity censor before broadcast/storage — it defeats leetspeak,
-// suffixes ("raped"), and concatenations ("fuckniggers") while whitelisting innocent
-// words like "class"/"grape". No rate limiting.
+// new arrivals see recent history.
+//
+// Censoring (via `obscenity`) defeats leetspeak, suffixes ("raped"), concatenations
+// ("fuckniggers"), AND separator evasions ("N I G G E R", "f.u.c.k") — the last via a
+// skip-non-alphabetic transformer — while whitelisting innocent words (class, cockpit,
+// shiitake...). A cross-message pass also catches slurs spelled one letter per message.
 
 import {
   RegExpMatcher, TextCensor, DataSet, pattern,
-  englishDataset, englishRecommendedTransformers, asteriskCensorStrategy,
+  englishDataset, englishRecommendedTransformers, skipNonAlphabeticTransformer,
+  asteriskCensorStrategy,
 } from 'obscenity';
 
 const MAX_LEN = 2000;   // max characters per message (technical bound, not moderation)
 const MAX_NICK = 24;    // max characters per nickname
 const HISTORY = 50;     // how many recent messages new visitors receive
 
-// Extra terms not in the base dataset that the owner wants blocked. Note: "gay" will
-// also mask non-offensive uses — included at the owner's request.
-const EXTRA_WORDS = ['gay', 'niga', 'nigga'];
-let _dataset = new DataSet().addAll(englishDataset);
-for (const w of EXTRA_WORDS)
-  _dataset = _dataset.addPhrase(p => p.setMetadata({ originalWord: w }).addPattern(pattern`${w}`));
+// Extra terms to block (not in / weakly covered by the base dataset). Note: "gay" also
+// masks non-offensive uses — included at the owner's request.
+const EXTRA_BAD = ['gay', 'niga', 'nigga'];
+// Innocent words that the aggressive matcher would otherwise flag.
+const EXTRA_OK = ['cockpit', 'shiitake', 'shiitakes', 'mishit'];
 
-const _matcher = new RegExpMatcher({ ..._dataset.build(), ...englishRecommendedTransformers });
+let _dataset = new DataSet().addAll(englishDataset);
+for (const w of EXTRA_BAD)
+  _dataset = _dataset.addPhrase(p => p.setMetadata({ originalWord: w }).addPattern(pattern`${w}`));
+const _built = _dataset.build();
+_built.whitelistedTerms = [...(_built.whitelistedTerms || []), ...EXTRA_OK];
+
+const _matcher = new RegExpMatcher({
+  ..._built,
+  // skip-non-alphabetic lets us catch "N I G G E R" / "f.u.c.k" without new false positives.
+  blacklistMatcherTransformers: [
+    ...englishRecommendedTransformers.blacklistMatcherTransformers,
+    skipNonAlphabeticTransformer(),
+  ],
+  whitelistMatcherTransformers: englishRecommendedTransformers.whitelistMatcherTransformers,
+});
 const _censor = new TextCensor().setStrategy(asteriskCensorStrategy());
 
 function censor(text) {
   const s = String(text);
   return _censor.applyTo(s, _matcher.getAllMatches(s));
+}
+function hasProfanity(text) {
+  return _matcher.hasMatch(String(text));
+}
+// history entries carry an unshown `raw` (original text) used only for cross-message
+// detection; strip it before anything goes to clients.
+function stripRaw(history) {
+  return history.map(m => ({ nick: m.nick, text: m.text, ts: m.ts }));
+}
+
+// Catch slurs spelled one (or two) letters per message: concatenate a nick's recent
+// short messages; if that spells profanity, mask each contributing message. The length
+// gate keeps normal conversation (which is much longer) from ever being touched.
+function scrubVerticalRun(history, nick) {
+  const window = history.slice(-15);
+  const base = history.length - window.length;
+  const idxs = [];
+  window.forEach((m, i) => { if (m.nick === nick && [...(m.text || '')].length <= 3) idxs.push(base + i); });
+  if (idxs.length < 3) return false;
+  const concat = idxs.map(i => history[i].raw ?? history[i].text).join('');
+  if (concat.replace(/\s/g, '').length > 30 || !hasProfanity(concat)) return false;
+  let changed = false;
+  for (const i of idxs) {
+    const t = history[i].text;
+    if (!/^\*+$/.test(t)) { history[i] = { ...history[i], text: '*'.repeat(Math.max(1, [...t].length)) }; changed = true; }
+  }
+  return changed;
+}
+
+// Retroactive: scan the ENTIRE history (no recent-window limit) and mask any nick whose
+// short messages concatenate into profanity spelled one letter at a time.
+function scrubVerticalAll(history) {
+  let changed = false;
+  for (const nick of new Set(history.map(m => m.nick))) {
+    const idxs = [];
+    history.forEach((m, i) => { if (m.nick === nick && [...(m.text || '')].length <= 3) idxs.push(i); });
+    if (idxs.length < 3) continue;
+    const concat = idxs.map(i => history[i].raw ?? history[i].text).join('');
+    if (!hasProfanity(concat)) continue;
+    for (const i of idxs) {
+      const t = history[i].text;
+      if (!/^\*+$/.test(t)) { history[i] = { ...history[i], text: '*'.repeat(Math.max(1, [...t].length)) }; changed = true; }
+    }
+  }
+  return changed;
 }
 
 const CORS = { 'Access-Control-Allow-Origin': '*' };
@@ -44,9 +105,10 @@ export default {
       }
       return new Response('Bitcoin Battlefield chat. Connect with a WebSocket.', { headers: CORS });
     }
-    // Moderation endpoint: trim/clear stored history. Guarded by the ADMIN_KEY secret.
+    // Moderation endpoint, guarded by the ADMIN_KEY secret.
     //   POST /admin?trim=N   -> drop the oldest N stored messages
     //   POST /admin?clear=1  -> wipe all stored history
+    //   POST /admin?censor=1 -> re-censor stored history with the current filter
     if (url.pathname === '/admin') {
       if (!env.ADMIN_KEY || request.headers.get('x-admin-key') !== env.ADMIN_KEY)
         return new Response('forbidden', { status: 403, headers: CORS });
@@ -70,12 +132,10 @@ export class ChatRoom {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
 
-    // Hibernatable WebSocket: the DO can sleep between messages and keep the socket.
     this.ctx.acceptWebSocket(server);
 
-    // Send recent history straight away so the visitor lands in an active room.
     const history = (await this.ctx.storage.get('history')) || [];
-    server.send(JSON.stringify({ type: 'history', messages: history }));
+    server.send(JSON.stringify({ type: 'history', messages: stripRaw(history) }));
     this.broadcastPresence();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -87,7 +147,7 @@ export class ChatRoom {
 
     if (data.type === 'join') {
       const nick = sanitizeNick(data.nick);
-      ws.serializeAttachment({ nick });   // survives DO hibernation
+      ws.serializeAttachment({ nick });
       this.broadcast({ type: 'system', text: nick + ' joined', ts: Date.now() });
       this.broadcastPresence();
       return;
@@ -96,28 +156,35 @@ export class ChatRoom {
     if (data.type === 'msg') {
       const att = ws.deserializeAttachment() || {};
       const nick = att.nick || 'anon';
-      const text = censor(String(data.text || '').slice(0, MAX_LEN));
+      const raw = String(data.text || '').slice(0, MAX_LEN);
+      const text = censor(raw);
       if (!text.trim()) return;
-      const msg = { type: 'msg', nick, text, ts: Date.now() };
-      this.broadcast(msg);
-      await this.store(msg);
+      const ts = Date.now();
+      this.broadcast({ type: 'msg', nick, text, ts });
+      const history = await this.store({ nick, text, raw, ts });
+      // If this nick just completed a slur spelled across several short messages,
+      // mask the whole run and push the corrected history to everyone.
+      if (scrubVerticalRun(history, nick)) {
+        await this.ctx.storage.put('history', history);
+        this.broadcast({ type: 'history', messages: stripRaw(history) });
+      }
     }
   }
 
   async webSocketClose() { this.broadcastPresence(); }
   async webSocketError() { this.broadcastPresence(); }
 
-  // Trim oldest N (?trim=N) or wipe all (?clear=1) stored messages, then live-refresh
-  // every connected client so open chat windows update immediately.
   async admin(url) {
     let history = (await this.ctx.storage.get('history')) || [];
     if (url.searchParams.get('clear') === '1') history = [];
     const n = parseInt(url.searchParams.get('trim') || '0', 10);
     if (n > 0) history = history.slice(n);
-    if (url.searchParams.get('censor') === '1')   // retroactively mask stored nicks + text
+    if (url.searchParams.get('censor') === '1') {
       history = history.map(m => ({ ...m, nick: censor(m.nick || ''), text: censor(m.text || '') }));
+      scrubVerticalAll(history);   // also clean letter-per-message spellings
+    }
     await this.ctx.storage.put('history', history);
-    this.broadcast({ type: 'history', messages: history });
+    this.broadcast({ type: 'history', messages: stripRaw(history) });
     return new Response(JSON.stringify({ ok: true, remaining: history.length }),
       { headers: { ...CORS, 'content-type': 'application/json' } });
   }
@@ -135,13 +202,15 @@ export class ChatRoom {
 
   async store(msg) {
     const history = (await this.ctx.storage.get('history')) || [];
-    history.push({ nick: msg.nick, text: msg.text, ts: msg.ts });
+    history.push({ nick: msg.nick, text: msg.text, raw: msg.raw, ts: msg.ts });
     while (history.length > HISTORY) history.shift();
     await this.ctx.storage.put('history', history);
+    return history;
   }
 }
 
-// Keep only printable characters, cap length. Not moderation — just keeps names renderable.
+// Keep only printable characters, cap length, then censor. Not moderation of content —
+// just keeps names renderable and blocks slurs in nicknames.
 function sanitizeNick(n) {
   const str = String(n || '');
   let out = '';
